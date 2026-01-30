@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:convert';
 import 'package:web_socket_channel/web_socket_channel.dart';
 import '../models/message.dart';
 import '../models/vote.dart';
@@ -12,10 +13,11 @@ class WebSocketClient {
   final String deviceId;
   final String participantUuid;
   
-  final StreamController<Message> _messageController = StreamController<Message>.broadcast();
+  final StreamController<Map<String, dynamic>> _messageController = 
+      StreamController<Map<String, dynamic>>.broadcast();
   bool _connected = false;
 
-  Stream<Message> get messages => _messageController.stream;
+  Stream<Map<String, dynamic>> get messages => _messageController.stream;
   bool get isConnected => _connected;
 
   WebSocketClient({
@@ -36,12 +38,16 @@ class WebSocketClient {
       _connected = true;
       
       // Send join message
-      final joinMessage = Message.participantJoined(
-        pollId: pollId,
-        deviceId: deviceId,
-        participantUuid: participantUuid,
-      );
-      _channel.sink.add(joinMessage.toJsonString());
+      final joinMessage = {
+        'type': 'participantJoined',
+        'data': {
+          'pollId': pollId,
+          'deviceId': deviceId,
+          'participantUuid': participantUuid,
+          'password': password,
+        },
+      };
+      _channel.sink.add(jsonEncode(joinMessage));
       
       print('[Votexa Client] Connected to host on $hostAddress:$hostPort');
       
@@ -56,21 +62,33 @@ class WebSocketClient {
         onDone: () {
           print('[Votexa Client] Disconnected from host');
           _connected = false;
+          // Add a disconnection message
+          _messageController.add({
+            'type': 'disconnected',
+            'data': {'reason': 'Connection closed'},
+          });
         },
       );
     } catch (e) {
       _connected = false;
       print('[Votexa Client] Connection failed: $e');
       _messageController.addError('Failed to connect: $e');
+      rethrow;
     }
   }
 
   void _handleMessage(dynamic data) {
     try {
-      final message = Message.fromJsonString(data as String);
-      _messageController.add(message);
+      if (data is String) {
+        final Map<String, dynamic> message = jsonDecode(data);
+        _messageController.add(message);
+        print('[Votexa Client] Received message type: ${message['type']}');
+      } else {
+        print('[Votexa Client] Received non-string message: ${data.runtimeType}');
+      }
     } catch (e) {
       print('[Votexa Client] Error parsing message: $e');
+      _messageController.addError('Failed to parse message: $e');
     }
   }
 
@@ -81,17 +99,21 @@ class WebSocketClient {
     }
 
     try {
-      final vote = Vote(
-        pollId: pollId,
-        questionId: questionId,
-        deviceId: deviceId,
-        participantUuid: participantUuid,
-        selectedOption: selectedOption,
-        timestamp: DateTime.now(),
-      );
+      final voteMessage = {
+        'type': 'voteReceived',
+        'data': {
+          'vote': {
+            'pollId': pollId,
+            'questionId': questionId,
+            'deviceId': deviceId,
+            'participantUuid': participantUuid,
+            'selectedOption': selectedOption,
+            'timestamp': DateTime.now().toIso8601String(),
+          },
+        },
+      };
 
-      final message = Message.voteReceived(vote: vote);
-      _channel.sink.add(message.toJsonString());
+      _channel.sink.add(jsonEncode(voteMessage));
       
       print('[Votexa Client] Vote sent: $questionId -> $selectedOption');
     } catch (e) {
@@ -101,8 +123,13 @@ class WebSocketClient {
   }
 
   Future<void> disconnect() async {
-    _connected = false;
-    await _channel.sink.close();
-    _messageController.close();
+    try {
+      _connected = false;
+      await _channel.sink.close();
+      await _messageController.close();
+      print('[Votexa Client] Disconnected successfully');
+    } catch (e) {
+      print('[Votexa Client] Error during disconnect: $e');
+    }
   }
 }
