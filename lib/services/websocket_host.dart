@@ -22,7 +22,7 @@ class WebSocketHost {
   
   Stream<Map<String, dynamic>> get messages => _messageController.stream;
   
-  int get connectedParticipants => _connectedClients.length;
+  int get connectedParticipants => _clientsByUuid.length;
   
   int get port => _server.port;
   
@@ -99,15 +99,19 @@ class WebSocketHost {
   void _handleNewClient(WebSocket ws) {
     _connectedClients.add(ws);
     print('[Votexa Host] New client connected. Total: ${_connectedClients.length}');
+    print('[Votexa Host] Listening for participant join message...');
     
     ws.listen(
-      (message) => _handleMessage(ws, message),
+      (message) {
+        print('[Votexa Host] Received raw message from new client');
+        _handleMessage(ws, message);
+      },
       onError: (error) {
         print('[Votexa Host] WebSocket error: $error');
         _removeClient(ws);
       },
       onDone: () {
-        print('[Votexa Host] Client disconnected');
+        print('[Vovexa Host] Client disconnected');
         _removeClient(ws);
       },
     );
@@ -126,16 +130,23 @@ class WebSocketHost {
       return false;
     });
     
+    // Remove from device tracking
+    if (removedUuid != null) {
+      _participantUuidsPerDevice.forEach((device, uuids) {
+        uuids.remove(removedUuid);
+      });
+    }
+    
     // Notify provider about disconnection
     _messageController.add({
       'type': 'participantLeft',
       'data': {
         'participantUuid': removedUuid ?? 'unknown',
-        'connectedCount': _connectedClients.length,
+        'connectedCount': _clientsByUuid.length,
       },
     });
     
-    print('[Votexa Host] Client removed. Remaining: ${_connectedClients.length}');
+    print('[Vovexa Host] Client removed. Remaining: ${_clientsByUuid.length}');
   }
 
   void _handleMessage(WebSocket ws, dynamic data) {
@@ -152,13 +163,17 @@ class WebSocketHost {
       
       switch (messageType) {
         case 'participantJoined':
+          print('[Vovexa Host] Processing participantJoined');
           _handleParticipantJoin(ws, message['data'] ?? {});
           break;
         case 'voteReceived':
-          _handleVote(message['data'] ?? {});
+          print('[Vovexa Host] Processing voteReceived');
+          final voteData = message['data'] ?? {};
+          print('[Vovexa Host] Vote data: $voteData');
+          _handleVote(voteData);
           break;
         default:
-          print('[Votexa Host] Unknown message type: $messageType');
+          print('[Vovexa Host] Unknown message type: $messageType');
       }
     } catch (e) {
       print('[Votexa Host] Error handling message: $e');
@@ -171,7 +186,7 @@ class WebSocketHost {
     final String? providedPassword = data['password'];
     
     if (deviceId == null || participantUuid == null) {
-      print('[Votexa Host] Invalid join request - missing required fields');
+      print('[Vovexa Host] Invalid join request - missing required fields');
       _sendError(ws, 'Invalid join request');
       return;
     }
@@ -179,7 +194,7 @@ class WebSocketHost {
     // Verify password if required
     if (password != null && password!.isNotEmpty) {
       if (providedPassword != password) {
-        print('[Votexa Host] Invalid password from $participantUuid');
+        print('[Vovexa Host] Invalid password from $participantUuid');
         _sendError(ws, 'Invalid password');
         ws.close(1008, 'Invalid password');
         return;
@@ -192,7 +207,8 @@ class WebSocketHost {
     // Track participant UUID per device
     _participantUuidsPerDevice.putIfAbsent(deviceId, () => {}).add(participantUuid);
     
-    print('[Votexa Host] Participant joined: $deviceId - $participantUuid');
+    print('[Vovexa Host] Participant joined: $deviceId - $participantUuid');
+    print('[Vovexa Host] Total clients now: ${_connectedClients.length}, Total UUIDs: ${_clientsByUuid.length}');
     
     // Emit participant joined message to provider
     _messageController.add({
@@ -201,7 +217,7 @@ class WebSocketHost {
         'deviceId': deviceId,
         'participantUuid': participantUuid,
         'pollId': pollId,
-        'connectedCount': _connectedClients.length,
+        'connectedCount': _clientsByUuid.length,
       },
     });
   }
@@ -371,6 +387,7 @@ class WebSocketHost {
   }
 
   void broadcastPollStarted(String pollId, List<Question> questions) {
+    print('[Vovexa Host] Broadcasting pollStarted - ${_connectedClients.length} clients, ${questions.length} questions');
     final message = {
       'type': 'pollStarted',
       'data': {
@@ -379,17 +396,23 @@ class WebSocketHost {
       },
     };
     _broadcastToAll(message);
+    print('[Vovexa Host] pollStarted broadcast complete');
   }
 
   void _broadcastToAll(Map<String, dynamic> message) {
     final jsonString = jsonEncode(message);
+    final messageType = message['type'] ?? 'unknown';
+    print('[Vovexa Host] Broadcasting $messageType to ${_connectedClients.length} clients');
+    int sent = 0;
     for (var client in _connectedClients) {
       try {
         client.add(jsonString);
+        sent++;
       } catch (e) {
-        print('[Votexa Host] Error broadcasting to client: $e');
+        print('[Vovexa Host] Error broadcasting to client: $e');
       }
     }
+    print('[Vovexa Host] Broadcast $messageType sent to $sent clients');
   }
 
   void closePoll() {

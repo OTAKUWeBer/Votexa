@@ -544,11 +544,24 @@ class _HostPollPageState extends State<HostPollPage> {
                             height: 56,
                             child: ElevatedButton(
                               onPressed: () {
+                                print('[HostPollPage] Starting poll...');
                                 pollProvider.startPoll();
-                                Navigator.of(context).pushReplacementNamed(
-                                  '/results',
-                                  arguments: {'isHost': true},
+                                // Show confirmation and navigate after a brief delay
+                                ScaffoldMessenger.of(context).showSnackBar(
+                                  const SnackBar(
+                                    content: Text('Poll started! Waiting for participant responses...'),
+                                    duration: Duration(seconds: 2),
+                                  ),
                                 );
+                                // Navigate to results page after a delay to let broadcast propagate
+                                Future.delayed(const Duration(milliseconds: 500), () {
+                                  if (mounted) {
+                                    Navigator.of(context).pushReplacementNamed(
+                                      '/results',
+                                      arguments: {'isHost': true},
+                                    );
+                                  }
+                                });
                               },
                               style: ElevatedButton.styleFrom(
                                 backgroundColor: const Color(0xFF10b981),

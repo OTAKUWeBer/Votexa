@@ -15,6 +15,8 @@ class _ParticipantJoinPageState extends State<ParticipantJoinPage> {
   bool _isScanning = true;
   final TextEditingController _pollIdController = TextEditingController();
   final TextEditingController _passwordController = TextEditingController();
+  final TextEditingController _hostAddressController = TextEditingController();
+  final TextEditingController _hostPortController = TextEditingController();
   bool _manualEntry = false;
   String _hostAddress = '192.168.1.100';
   int _hostPort = 8080;
@@ -31,6 +33,8 @@ class _ParticipantJoinPageState extends State<ParticipantJoinPage> {
     _scannerController.dispose();
     _pollIdController.dispose();
     _passwordController.dispose();
+    _hostAddressController.dispose();
+    _hostPortController.dispose();
     super.dispose();
   }
 
@@ -46,14 +50,22 @@ class _ParticipantJoinPageState extends State<ParticipantJoinPage> {
   }
 
   void _parsePollData(String qrData) {
-    // Expected format: VOTEXA|POLL_ID|HOST_IP|PORT or VOTEXA:POLL_ID
+    // Expected format: VOTEXA|POLL_ID|HOST_IP|PORT
+    print('[ParticipantJoin] Parsing QR data: $qrData');
     try {
       if (qrData.startsWith('VOTEXA|')) {
         final parts = qrData.substring(7).split('|');
+        print('[ParticipantJoin] QR parts: $parts');
         if (parts.length >= 3) {
           _pollIdController.text = parts[0];
           _hostAddress = parts[1];
+          _hostAddressController.text = parts[1];
           _hostPort = int.tryParse(parts[2]) ?? 8080;
+          _hostPortController.text = parts[2];
+          print('[ParticipantJoin] Parsed - Poll: ${parts[0]}, Host: ${parts[1]}, Port: ${parts[2]}');
+        } else {
+          print('[ParticipantJoin] Invalid QR format - not enough parts');
+          _pollIdController.text = qrData;
         }
       } else if (qrData.startsWith('VOTEXA:')) {
         _pollIdController.text = qrData.substring(7);
@@ -77,35 +89,72 @@ class _ParticipantJoinPageState extends State<ParticipantJoinPage> {
           'Join Poll',
           style: TextStyle(color: Colors.white),
         ),
-        content: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Text(
-              'Poll ID: ${_pollIdController.text}',
-              style: const TextStyle(
-                color: Color(0xFF0DD9FF),
-                fontWeight: FontWeight.bold,
+        content: SingleChildScrollView(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Text(
+                'Poll ID: ${_pollIdController.text}',
+                style: const TextStyle(
+                  color: Color(0xFF0DD9FF),
+                  fontWeight: FontWeight.bold,
+                ),
               ),
-            ),
-            const SizedBox(height: 16),
-            TextField(
-              controller: _passwordController,
-              obscureText: true,
-              style: const TextStyle(color: Colors.white),
-              decoration: InputDecoration(
-                hintText: 'Password (if needed)',
-                hintStyle: const TextStyle(color: Color(0xFF6b7280)),
-                filled: true,
-                fillColor: Colors.white.withOpacity(0.05),
-                border: OutlineInputBorder(
-                  borderRadius: BorderRadius.circular(8),
-                  borderSide: BorderSide(
-                    color: Colors.white.withOpacity(0.2),
+              const SizedBox(height: 16),
+              TextField(
+                controller: _hostAddressController,
+                style: const TextStyle(color: Colors.white),
+                decoration: InputDecoration(
+                  hintText: 'Host IP Address',
+                  hintStyle: const TextStyle(color: Color(0xFF6b7280)),
+                  filled: true,
+                  fillColor: Colors.white.withOpacity(0.05),
+                  border: OutlineInputBorder(
+                    borderRadius: BorderRadius.circular(8),
+                    borderSide: BorderSide(
+                      color: Colors.white.withOpacity(0.2),
+                    ),
                   ),
                 ),
               ),
-            ),
-          ],
+              const SizedBox(height: 12),
+              TextField(
+                controller: _hostPortController,
+                style: const TextStyle(color: Colors.white),
+                keyboardType: TextInputType.number,
+                decoration: InputDecoration(
+                  hintText: 'Host Port',
+                  hintStyle: const TextStyle(color: Color(0xFF6b7280)),
+                  filled: true,
+                  fillColor: Colors.white.withOpacity(0.05),
+                  border: OutlineInputBorder(
+                    borderRadius: BorderRadius.circular(8),
+                    borderSide: BorderSide(
+                      color: Colors.white.withOpacity(0.2),
+                    ),
+                  ),
+                ),
+              ),
+              const SizedBox(height: 12),
+              TextField(
+                controller: _passwordController,
+                obscureText: true,
+                style: const TextStyle(color: Colors.white),
+                decoration: InputDecoration(
+                  hintText: 'Password (if needed)',
+                  hintStyle: const TextStyle(color: Color(0xFF6b7280)),
+                  filled: true,
+                  fillColor: Colors.white.withOpacity(0.05),
+                  border: OutlineInputBorder(
+                    borderRadius: BorderRadius.circular(8),
+                    borderSide: BorderSide(
+                      color: Colors.white.withOpacity(0.2),
+                    ),
+                  ),
+                ),
+              ),
+            ],
+          ),
         ),
         actions: [
           TextButton(
@@ -138,7 +187,27 @@ class _ParticipantJoinPageState extends State<ParticipantJoinPage> {
       return;
     }
 
+    if (_hostAddressController.text.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Please enter host IP address')),
+      );
+      return;
+    }
+
+    if (_hostPortController.text.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Please enter host port')),
+      );
+      return;
+    }
+
     try {
+      // Update from text fields
+      _hostAddress = _hostAddressController.text;
+      _hostPort = int.tryParse(_hostPortController.text) ?? 8080;
+
+      print('[ParticipantJoin] Joining poll - Host: $_hostAddress:$_hostPort, Poll: ${_pollIdController.text}');
+
       final participantProvider = context.read<ParticipantProvider>();
 
       final success = await participantProvider.joinPoll(
@@ -153,13 +222,14 @@ class _ParticipantJoinPageState extends State<ParticipantJoinPage> {
           Navigator.of(context).pushReplacementNamed('/participant_vote');
         } else {
           ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(content: Text('Failed to join poll')),
+            SnackBar(content: Text('Failed to join poll: ${participantProvider.connectionError ?? 'Unknown error'}')),
           );
           _isScanning = true;
         }
       }
     } catch (e) {
       if (mounted) {
+        print('[ParticipantJoin] Join error: $e');
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(content: Text('Error: $e')),
         );
@@ -315,66 +385,118 @@ class _ParticipantJoinPageState extends State<ParticipantJoinPage> {
   Widget _buildManualEntry() {
     return Padding(
       padding: const EdgeInsets.all(24),
-      child: Column(
-        mainAxisAlignment: MainAxisAlignment.center,
-        children: [
-          const Text(
-            'Enter Poll ID',
-            style: TextStyle(
-              fontSize: 24,
-              fontWeight: FontWeight.bold,
-              color: Colors.white,
-            ),
-          ),
-          const SizedBox(height: 32),
-          TextField(
-            controller: _pollIdController,
-            style: const TextStyle(color: Colors.white, fontSize: 18),
-            textAlign: TextAlign.center,
-            decoration: InputDecoration(
-              hintText: 'Poll ID',
-              hintStyle: const TextStyle(color: Color(0xFF6b7280)),
-              filled: true,
-              fillColor: Colors.white.withOpacity(0.05),
-              border: OutlineInputBorder(
-                borderRadius: BorderRadius.circular(12),
-                borderSide: BorderSide(
-                  color: Colors.white.withOpacity(0.2),
-                ),
+      child: SingleChildScrollView(
+        child: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            const Text(
+              'Enter Connection Details',
+              style: TextStyle(
+                fontSize: 24,
+                fontWeight: FontWeight.bold,
+                color: Colors.white,
               ),
-              focusedBorder: OutlineInputBorder(
-                borderRadius: BorderRadius.circular(12),
-                borderSide: const BorderSide(
-                  color: Color(0xFF8b5cf6),
-                  width: 2,
-                ),
-              ),
-              contentPadding: const EdgeInsets.all(16),
             ),
-          ),
-          const SizedBox(height: 24),
-          SizedBox(
-            width: double.infinity,
-            height: 56,
-            child: ElevatedButton(
-              onPressed: _joinPoll,
-              style: ElevatedButton.styleFrom(
-                backgroundColor: const Color(0xFF8b5cf6),
-                shape: RoundedRectangleBorder(
+            const SizedBox(height: 32),
+            TextField(
+              controller: _hostAddressController,
+              style: const TextStyle(color: Colors.white, fontSize: 16),
+              decoration: InputDecoration(
+                hintText: 'Host IP Address',
+                hintStyle: const TextStyle(color: Color(0xFF6b7280)),
+                filled: true,
+                fillColor: Colors.white.withOpacity(0.05),
+                border: OutlineInputBorder(
                   borderRadius: BorderRadius.circular(12),
+                  borderSide: BorderSide(
+                    color: Colors.white.withOpacity(0.2),
+                  ),
                 ),
+                focusedBorder: OutlineInputBorder(
+                  borderRadius: BorderRadius.circular(12),
+                  borderSide: const BorderSide(
+                    color: Color(0xFF8b5cf6),
+                    width: 2,
+                  ),
+                ),
+                contentPadding: const EdgeInsets.all(16),
               ),
-              child: const Text(
-                'Join Poll',
-                style: TextStyle(
-                  fontSize: 16,
-                  fontWeight: FontWeight.bold,
-                  color: Colors.white,
+            ),
+            const SizedBox(height: 16),
+            TextField(
+              controller: _hostPortController,
+              style: const TextStyle(color: Colors.white, fontSize: 16),
+              keyboardType: TextInputType.number,
+              decoration: InputDecoration(
+                hintText: 'Host Port',
+                hintStyle: const TextStyle(color: Color(0xFF6b7280)),
+                filled: true,
+                fillColor: Colors.white.withOpacity(0.05),
+                border: OutlineInputBorder(
+                  borderRadius: BorderRadius.circular(12),
+                  borderSide: BorderSide(
+                    color: Colors.white.withOpacity(0.2),
+                  ),
+                ),
+                focusedBorder: OutlineInputBorder(
+                  borderRadius: BorderRadius.circular(12),
+                  borderSide: const BorderSide(
+                    color: Color(0xFF8b5cf6),
+                    width: 2,
+                  ),
+                ),
+                contentPadding: const EdgeInsets.all(16),
+              ),
+            ),
+            const SizedBox(height: 16),
+            TextField(
+              controller: _pollIdController,
+              style: const TextStyle(color: Colors.white, fontSize: 16),
+              decoration: InputDecoration(
+                hintText: 'Poll ID',
+                hintStyle: const TextStyle(color: Color(0xFF6b7280)),
+                filled: true,
+                fillColor: Colors.white.withOpacity(0.05),
+                border: OutlineInputBorder(
+                  borderRadius: BorderRadius.circular(12),
+                  borderSide: BorderSide(
+                    color: Colors.white.withOpacity(0.2),
+                  ),
+                ),
+                focusedBorder: OutlineInputBorder(
+                  borderRadius: BorderRadius.circular(12),
+                  borderSide: const BorderSide(
+                    color: Color(0xFF8b5cf6),
+                    width: 2,
+                  ),
+                ),
+                contentPadding: const EdgeInsets.all(16),
+              ),
+            ),
+            const SizedBox(height: 24),
+            SizedBox(
+              width: double.infinity,
+              height: 56,
+              child: ElevatedButton(
+                onPressed: _joinPoll,
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: const Color(0xFF8b5cf6),
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(12),
+                  ),
+                ),
+                child: const Text(
+                  'Join Poll',
+                  style: TextStyle(
+                    fontSize: 16,
+                    fontWeight: FontWeight.bold,
+                    color: Colors.white,
+                  ),
                 ),
               ),
             ),
-          ),
-        ],
+          ],
+        ),
       ),
     );
   }

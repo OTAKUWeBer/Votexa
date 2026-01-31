@@ -9,7 +9,7 @@ class PollProvider extends ChangeNotifier {
   Poll? _currentPoll;
   WebSocketHost? _wsHost;
   List<Question> _questions = [];
-  Set<String> _votedKeys = {}; // Track voted combinations
+  Set<String> _votedKeys = {};
   int _totalParticipants = 0;
   String? _deviceId;
   bool _isHost = false;
@@ -50,8 +50,7 @@ class PollProvider extends ChangeNotifier {
   }) async {
     try {
       _hostError = null;
-      
-      // Ensure device ID is initialized
+
       if (_deviceId == null) {
         await initializeDeviceId();
       }
@@ -60,11 +59,9 @@ class PollProvider extends ChangeNotifier {
         throw Exception('Device ID is null');
       }
 
-      // Generate poll ID
       final pollId = DeviceIdManager.generatePollId();
       print('[PollProvider] Creating poll with ID: $pollId');
 
-      // Create poll instance
       _currentPoll = Poll(
         pollId: pollId,
         password: password,
@@ -72,27 +69,23 @@ class PollProvider extends ChangeNotifier {
         createdAt: DateTime.now(),
       );
 
-      // Initialize WebSocket host
       _wsHost = WebSocketHost(
         pollId: pollId,
         password: password,
         deviceId: _deviceId!,
       );
 
-      // Start WebSocket server
       await _wsHost!.start(port: port);
-      
-      // Get host connection info
+
       _hostIp = _wsHost!.hostIp;
       _hostPort = _wsHost!.port;
-      
+
       _isHost = true;
       _votedKeys.clear();
       _questions.clear();
 
       print('[PollProvider] Poll created successfully - IP: $_hostIp, Port: $_hostPort');
 
-      // Listen for messages from WebSocket host
       _wsHost!.messages.listen(
         (message) {
           print('[PollProvider] Received message from host: ${message['type']}');
@@ -108,7 +101,6 @@ class PollProvider extends ChangeNotifier {
         },
       );
 
-      // Periodic update of participant count
       _participantUpdateTimer?.cancel();
       _participantUpdateTimer = Timer.periodic(
         const Duration(milliseconds: 500),
@@ -118,8 +110,7 @@ class PollProvider extends ChangeNotifier {
             if (_totalParticipants != count) {
               _totalParticipants = count;
               notifyListeners();
-              
-              // Broadcast participant count update
+
               _wsHost!.broadcastParticipantCount(count);
             }
           }
@@ -142,40 +133,27 @@ class PollProvider extends ChangeNotifier {
     try {
       final String? messageType = message['type'];
       final Map<String, dynamic>? data = message['data'];
-      
-      if (messageType == null) {
-        print('[PollProvider] Message missing type field');
+
+      if (messageType == null || data == null) {
+        print('[PollProvider] Invalid message structure');
         return;
       }
-      
-      if (data == null) {
-        print('[PollProvider] Message missing data field');
-        return;
-      }
-      
+
       print('[PollProvider] Processing message type: $messageType');
 
       switch (messageType) {
         case 'participantJoined':
           _handleParticipantJoined(data);
           break;
-        
         case 'participantLeft':
           _handleParticipantLeft(data);
           break;
-        
         case 'voteReceived':
           _handleVoteReceived(data);
           break;
-        
         case 'participantCount':
           _handleParticipantCountUpdate(data);
           break;
-        
-        case 'hostCreated':
-          _handleHostCreated(data);
-          break;
-        
         default:
           print('[PollProvider] Unknown message type: $messageType');
       }
@@ -184,30 +162,21 @@ class PollProvider extends ChangeNotifier {
     }
   }
 
-  /// Handle host created event
-  void _handleHostCreated(Map<String, dynamic> data) {
-    print('[PollProvider] Host created successfully');
-    // Additional host setup if needed
-  }
-
   /// Handle participant joined event
   void _handleParticipantJoined(Map<String, dynamic> data) {
     final String? participantUuid = data['participantUuid'];
     final String? deviceId = data['deviceId'];
-    
+
     if (participantUuid == null) {
       print('[PollProvider] Participant joined but UUID is missing');
       return;
     }
-    
+
     print('[PollProvider] Participant joined: $participantUuid (device: $deviceId)');
-    
+
     if (_wsHost != null) {
       _totalParticipants = _wsHost!.connectedParticipants;
-      
-      // Send current poll state to new participant
       _sendPollInfoToParticipant(participantUuid);
-      
       notifyListeners();
     }
   }
@@ -216,7 +185,7 @@ class PollProvider extends ChangeNotifier {
   void _handleParticipantLeft(Map<String, dynamic> data) {
     final String? participantUuid = data['participantUuid'];
     print('[PollProvider] Participant left: $participantUuid');
-    
+
     if (_wsHost != null) {
       _totalParticipants = _wsHost!.connectedParticipants;
       notifyListeners();
@@ -230,19 +199,16 @@ class PollProvider extends ChangeNotifier {
       final String? selectedOption = data['selectedOption'];
       final String? participantUuid = data['participantUuid'];
       final String? deviceId = data['deviceId'];
-      
-      if (questionId == null || selectedOption == null || 
-          participantUuid == null || deviceId == null) {
+
+      if (questionId == null || selectedOption == null || participantUuid == null || deviceId == null) {
         print('[PollProvider] Invalid vote data - missing required fields');
         return;
       }
-      
+
       print('[PollProvider] Vote received - Question: $questionId, Option: $selectedOption');
-      
-      // Create vote key
+
       final voteKey = '$deviceId:$participantUuid:$questionId';
-      
-      // Check for duplicate
+
       if (_votedKeys.contains(voteKey)) {
         print('[PollProvider] Duplicate vote prevented: $voteKey');
         _wsHost?.sendVoteAcknowledgement(
@@ -253,24 +219,18 @@ class PollProvider extends ChangeNotifier {
         );
         return;
       }
-      
-      // Record the vote
+
       _votedKeys.add(voteKey);
-      
-      // Update question vote counts
       _updateQuestionVotes(questionId, selectedOption);
-      
-      // Send acknowledgement back to participant
+
       _wsHost?.sendVoteAcknowledgement(
         participantUuid,
         questionId,
         success: true,
         message: 'Vote recorded',
       );
-      
-      // Broadcast updated results to all participants
+
       broadcastResults();
-      
     } catch (e) {
       print('[PollProvider] Error processing vote: $e');
     }
@@ -283,26 +243,22 @@ class PollProvider extends ChangeNotifier {
       print('[PollProvider] Warning: Question not found for vote: $questionId');
       return;
     }
-    
+
     final question = _questions[questionIndex];
     final updatedVotes = Map<String, int>.from(question.votes);
-    
-    // Increment vote count for selected option
+
     updatedVotes[selectedOption] = (updatedVotes[selectedOption] ?? 0) + 1;
 
-    // Count unique devices that voted for this question
-    final votingDevicesForQuestion = _votedKeys
-        .where((key) => key.endsWith(':$questionId'))
-        .length;
+    final votingDevicesForQuestion = _votedKeys.where((key) => key.endsWith(':$questionId')).length;
 
     final updatedQuestion = question.copyWith(
       votes: updatedVotes,
       votingDevices: votingDevicesForQuestion,
     );
-    
+
     _questions[questionIndex] = updatedQuestion;
     print('[PollProvider] Question updated - Total votes for "$selectedOption": ${updatedVotes[selectedOption]}');
-    
+
     notifyListeners();
   }
 
@@ -363,7 +319,6 @@ class PollProvider extends ChangeNotifier {
     _questions.add(question);
     print('[PollProvider] Question added: ${question.id} - $title');
 
-    // Broadcast question to all participants
     if (_wsHost != null) {
       _wsHost!.broadcastQuestionUpdate(question);
     }
@@ -419,14 +374,22 @@ class PollProvider extends ChangeNotifier {
     }
 
     _currentPoll = _currentPoll!.copyWith(isActive: true);
-    print('[PollProvider] Poll started: ${_currentPoll!.pollId}');
-    
-    // Broadcast poll started event to all participants
+    print('[PollProvider] Poll started: ${_currentPoll!.pollId} with ${_questions.length} questions');
+
     if (_wsHost != null) {
+      print('[PollProvider] Broadcasting pollStarted to ${_wsHost!.connectedParticipants} participants');
       _wsHost!.broadcastPollStarted(
         _currentPoll!.pollId,
         _questions,
       );
+
+      Future.delayed(const Duration(milliseconds: 100), () {
+        _wsHost!.broadcastResults(
+          _currentPoll!.pollId,
+          _questions,
+          _totalParticipants,
+        );
+      });
     }
 
     _hostError = null;
@@ -438,11 +401,9 @@ class PollProvider extends ChangeNotifier {
     if (_currentPoll == null) return;
 
     print('[PollProvider] Closing poll: ${_currentPoll!.pollId}');
-    
-    // Update poll status
+
     _currentPoll = _currentPoll?.copyWith(isActive: false);
-    
-    // Notify all participants
+
     if (_wsHost != null) {
       _wsHost!.closePoll();
     }
@@ -453,17 +414,14 @@ class PollProvider extends ChangeNotifier {
   /// Delete a question from the poll
   void deleteQuestion(String questionId) {
     _questions.removeWhere((q) => q.id == questionId);
-    
-    // Remove all votes for this question
     _votedKeys.removeWhere((key) => key.endsWith(':$questionId'));
-    
+
     print('[PollProvider] Question deleted: $questionId');
-    
-    // Broadcast updated questions list
+
     if (_wsHost != null && _currentPoll != null) {
       _wsHost!.broadcastPollStarted(_currentPoll!.pollId, _questions);
     }
-    
+
     notifyListeners();
   }
 
@@ -476,7 +434,7 @@ class PollProvider extends ChangeNotifier {
 
     final totalVotes = question.votes.values.fold<int>(0, (sum, count) => sum + count);
     final percentages = <String, double>{};
-    
+
     for (final option in question.options) {
       final votes = question.votes[option] ?? 0;
       percentages[option] = totalVotes > 0 ? (votes / totalVotes) * 100 : 0.0;
@@ -526,15 +484,15 @@ class PollProvider extends ChangeNotifier {
   /// Stop the poll and clean up resources
   Future<void> stopPoll() async {
     print('[PollProvider] Stopping poll');
-    
+
     _participantUpdateTimer?.cancel();
     _participantUpdateTimer = null;
-    
+
     if (_wsHost != null) {
       await _wsHost!.stop();
       _wsHost = null;
     }
-    
+
     _isHost = false;
     _currentPoll = null;
     _questions.clear();
@@ -543,7 +501,7 @@ class PollProvider extends ChangeNotifier {
     _hostIp = null;
     _hostPort = null;
     _hostError = null;
-    
+
     notifyListeners();
     print('[PollProvider] Poll stopped and cleaned up');
   }

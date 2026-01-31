@@ -32,12 +32,15 @@ class WebSocketClient {
   Future<void> connect() async {
     try {
       final wsUrl = Uri.parse('ws://$hostAddress:$hostPort');
+      print('[Votexa Client] Attempting connection to $wsUrl');
       _channel = WebSocketChannel.connect(wsUrl);
       
       await _channel.ready;
       _connected = true;
       
-      // Send join message
+      print('[Vovexa Client] WebSocket ready, sending join message');
+      
+      // Send join message with correct format
       final joinMessage = {
         'type': 'participantJoined',
         'data': {
@@ -48,6 +51,7 @@ class WebSocketClient {
         },
       };
       _channel.sink.add(jsonEncode(joinMessage));
+      print('[Votexa Client] Join message sent');
       
       print('[Votexa Client] Connected to host on $hostAddress:$hostPort');
       
@@ -81,13 +85,21 @@ class WebSocketClient {
     try {
       if (data is String) {
         final Map<String, dynamic> message = jsonDecode(data);
+        final messageType = message['type'];
+        print('[Vovexa Client] Received message type: $messageType');
+        
+        // Log important messages with more detail
+        if (messageType == 'pollStarted') {
+          final questionsData = message['data']?['questions'];
+          print('[Vovexa Client] Poll started with ${questionsData?.length ?? 0} questions');
+        }
+        
         _messageController.add(message);
-        print('[Votexa Client] Received message type: ${message['type']}');
       } else {
-        print('[Votexa Client] Received non-string message: ${data.runtimeType}');
+        print('[Vovexa Client] Received non-string message: ${data.runtimeType}');
       }
     } catch (e) {
-      print('[Votexa Client] Error parsing message: $e');
+      print('[Vovexa Client] Error parsing message: $e');
       _messageController.addError('Failed to parse message: $e');
     }
   }
