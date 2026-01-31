@@ -50,6 +50,7 @@ class PollProvider extends ChangeNotifier {
   }) async {
     try {
       _hostError = null;
+      print('[PollProvider] Starting poll creation...');
 
       if (_deviceId == null) {
         await initializeDeviceId();
@@ -75,9 +76,10 @@ class PollProvider extends ChangeNotifier {
         deviceId: _deviceId!,
       );
 
+      print('[PollProvider] Starting WebSocket server...');
       await _wsHost!.start(port: port);
 
-      _hostIp = _wsHost!.hostIp;
+      _hostIp = _wsHost!.hostIp ?? '192.168.1.100';
       _hostPort = _wsHost!.port;
 
       _isHost = true;
@@ -86,6 +88,7 @@ class PollProvider extends ChangeNotifier {
 
       print('[PollProvider] Poll created successfully - IP: $_hostIp, Port: $_hostPort');
 
+      // Listen for host messages
       _wsHost!.messages.listen(
         (message) {
           print('[PollProvider] Received message from host: ${message['type']}');
@@ -101,11 +104,12 @@ class PollProvider extends ChangeNotifier {
         },
       );
 
+      // Start periodic participant count updates
       _participantUpdateTimer?.cancel();
       _participantUpdateTimer = Timer.periodic(
         const Duration(milliseconds: 500),
         (_) {
-          if (_wsHost != null) {
+          if (_wsHost != null && mounted) {
             final count = _wsHost!.connectedParticipants;
             if (_totalParticipants != count) {
               _totalParticipants = count;
@@ -118,12 +122,23 @@ class PollProvider extends ChangeNotifier {
       );
 
       notifyListeners();
+      print('[PollProvider] Poll creation complete, notifying listeners');
       return true;
     } catch (e) {
       print('[PollProvider] Error creating poll: $e');
       _hostError = 'Failed to create poll: ${e.toString()}';
       _isHost = false;
       notifyListeners();
+      return false;
+    }
+  }
+  
+  /// Check if the provider is still mounted
+  bool get mounted {
+    try {
+      notifyListeners();
+      return true;
+    } catch (e) {
       return false;
     }
   }

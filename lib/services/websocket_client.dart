@@ -31,8 +31,14 @@ class WebSocketClient {
 
   Future<void> connect() async {
     try {
+      // Validate required fields
+      if (pollId.isEmpty || deviceId.isEmpty || participantUuid.isEmpty) {
+        throw Exception('Missing required fields: pollId=$pollId, deviceId=$deviceId, participantUuid=$participantUuid');
+      }
+
       final wsUrl = Uri.parse('ws://$hostAddress:$hostPort');
-      print('[Votexa Client] Attempting connection to $wsUrl');
+      print('[Vovexa Client] Attempting connection to $wsUrl');
+      print('[Vovexa Client] Credentials - Poll: $pollId, Device: $deviceId, UUID: $participantUuid');
       _channel = WebSocketChannel.connect(wsUrl);
       
       await _channel.ready;
@@ -51,7 +57,7 @@ class WebSocketClient {
         },
       };
       _channel.sink.add(jsonEncode(joinMessage));
-      print('[Votexa Client] Join message sent');
+      print('[Vovexa Client] Join message sent with UUID: $participantUuid');
       
       print('[Votexa Client] Connected to host on $hostAddress:$hostPort');
       

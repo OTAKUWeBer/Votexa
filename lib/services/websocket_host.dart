@@ -7,53 +7,68 @@ import '../models/question.dart';
 class WebSocketHost {
   late HttpServer _server;
   final Set<WebSocket> _connectedClients = {};
-  final Map<String, WebSocket> _clientsByUuid = {}; // Map participant UUID to WebSocket
+  final Map<String, WebSocket> _clientsByUuid =
+      {}; // Map participant UUID to WebSocket
   final String pollId;
   final String? password;
   final String deviceId;
-  final Set<String> _votedKeys = {}; // Track voted device:uuid:questionId combinations
-  final Map<String, Set<String>> _participantUuidsPerDevice = {}; // device -> set of uuids
-  
+  final Set<String> _votedKeys =
+      {}; // Track voted device:uuid:questionId combinations
+  final Map<String, Set<String>> _participantUuidsPerDevice =
+      {}; // device -> set of uuids
+
   String? _hostIp;
   bool _isRunning = false;
-  
-  final StreamController<Map<String, dynamic>> _messageController = 
+
+  final StreamController<Map<String, dynamic>> _messageController =
       StreamController<Map<String, dynamic>>.broadcast();
-  
+
   Stream<Map<String, dynamic>> get messages => _messageController.stream;
-  
+
   int get connectedParticipants => _clientsByUuid.length;
-  
+
   int get port => _server.port;
-  
+
   String? get hostIp => _hostIp;
-  
+
   bool get isRunning => _isRunning;
 
-  WebSocketHost({
-    required this.pollId,
-    this.password,
-    required this.deviceId,
-  });
+  WebSocketHost({required this.pollId, this.password, required this.deviceId});
 
   Future<void> start({int port = 0}) async {
     try {
-      // Get local IP address
-      _hostIp = await _getLocalIpAddress();
-      
+      print('[Vovexa Host] Starting server on port $port...');
+
+      // Start server first, it's the critical part
       _server = await HttpServer.bind(InternetAddress.anyIPv4, port);
       _isRunning = true;
-      
+
+      print('[Vovexa Host] Server bound to port ${_server.port}');
+
       _server.listen((HttpRequest request) async {
         if (WebSocketTransformer.isUpgradeRequest(request)) {
           WebSocket ws = await WebSocketTransformer.upgrade(request);
           _handleNewClient(ws);
         }
       });
-      
-      print('[Votexa Host] WebSocket server started on $_hostIp:${_server.port}');
-      
-      // Emit host created message
+
+      // Get local IP address asynchronously (doesn't block the UI)
+      _getLocalIpAddress()
+          .then((ip) {
+            _hostIp = ip ?? 'localhost';
+            print(
+              '[Vovexa Host] WebSocket server started on $_hostIp:${_server.port}',
+            );
+          })
+          .catchError((e) {
+            _hostIp = 'localhost';
+            print('[Vovexa Host] Error getting local IP: $e, using localhost');
+          });
+
+      // Set default IP immediately so QR code can be shown
+      _hostIp = '192.168.1.100'; // Will be updated when actual IP is found
+
+      // Emit host created message immediately
       _messageController.add({
         'type': 'hostCreated',
         'data': {
@@ -64,43 +79,48 @@ class WebSocketHost {
           'hostPort': _server.port,
         },
       });
+
+      print('[Vovexa Host] Host created message emitted');
     } catch (e) {
       _isRunning = false;
-      print('[Votexa Host] Error starting server: $e');
+      print('[Vovexa Host] Error starting server: $e');
       _messageController.addError('Failed to start server: $e');
       rethrow;
     }
   }
 
-  /// Get local IP address
+  /// Get local IP address asynchronously
   Future<String?> _getLocalIpAddress() async {
     try {
       final interfaces = await NetworkInterface.list(
         type: InternetAddressType.IPv4,
         includeLinkLocal: false,
-      );
-      
+      ).timeout(const Duration(seconds: 2));
+
       for (var interface in interfaces) {
         // Skip loopback
         if (interface.name.contains('lo')) continue;
-        
+
         for (var addr in interface.addresses) {
           if (!addr.isLoopback && addr.type == InternetAddressType.IPv4) {
+            print('[Vovexa Host] Found local IP: ${addr.address}');
             return addr.address;
           }
         }
       }
     } catch (e) {
-      print('[Votexa Host] Error getting local IP: $e');
+      print('[Vovexa Host] Error getting local IP (timeout or error): $e');
     }
     return null;
   }
 
   void _handleNewClient(WebSocket ws) {
     _connectedClients.add(ws);
-    print('[Votexa Host] New client connected. Total: ${_connectedClients.length}');
+    print(
+      '[Votexa Host] New client connected. Total: ${_connectedClients.length}',
+    );
     print('[Votexa Host] Listening for participant join message...');
-    
+
     ws.listen(
       (message) {
         print('[Votexa Host] Received raw message from new client');
@@ -119,7 +139,7 @@ class WebSocketHost {
 
   void _removeClient(WebSocket ws) {
     _connectedClients.remove(ws);
-    
+
     // Find and remove the participant UUID
     String? removedUuid;
     _clientsByUuid.removeWhere((uuid, socket) {
@@ -129,14 +149,14 @@ class WebSocketHost {
       }
       return false;
     });
-    
+
     // Remove from device tracking
     if (removedUuid != null) {
       _participantUuidsPerDevice.forEach((device, uuids) {
         uuids.remove(removedUuid);
       });
     }
-    
+
     // Notify provider about disconnection
     _messageController.add({
       'type': 'participantLeft',
@@ -145,7 +165,7 @@ class WebSocketHost {
         'connectedCount': _clientsByUuid.length,
       },
     });
-    
+
     print('[Vovexa Host] Client removed. Remaining: ${_clientsByUuid.length}');
   }
 
@@ -155,12 +175,12 @@ class WebSocketHost {
         print('[Votexa Host] Received non-string message');
         return;
       }
-      
+
       final Map<String, dynamic> message = jsonDecode(data);
       final String? messageType = message['type'];
-      
+
       print('[Votexa Host] Received message type: $messageType');
-      
+
       switch (messageType) {
         case 'participantJoined':
           print('[Vovexa Host] Processing participantJoined');
@@ -184,13 +204,13 @@ class WebSocketHost {
     final String? deviceId = data['deviceId'];
     final String? participantUuid = data['participantUuid'];
     final String? providedPassword = data['password'];
-    
+
     if (deviceId == null || participantUuid == null) {
       print('[Vovexa Host] Invalid join request - missing required fields');
       _sendError(ws, 'Invalid join request');
       return;
     }
-    
+
     // Verify password if required
     if (password != null && password!.isNotEmpty) {
       if (providedPassword != password) {
@@ -200,16 +220,20 @@ class WebSocketHost {
         return;
       }
     }
-    
+
     // Store WebSocket for this participant
     _clientsByUuid[participantUuid] = ws;
-    
+
     // Track participant UUID per device
-    _participantUuidsPerDevice.putIfAbsent(deviceId, () => {}).add(participantUuid);
-    
+    _participantUuidsPerDevice
+        .putIfAbsent(deviceId, () => {})
+        .add(participantUuid);
+
     print('[Vovexa Host] Participant joined: $deviceId - $participantUuid');
-    print('[Vovexa Host] Total clients now: ${_connectedClients.length}, Total UUIDs: ${_clientsByUuid.length}');
-    
+    print(
+      '[Vovexa Host] Total clients now: ${_connectedClients.length}, Total UUIDs: ${_clientsByUuid.length}',
+    );
+
     // Emit participant joined message to provider
     _messageController.add({
       'type': 'participantJoined',
@@ -225,30 +249,32 @@ class WebSocketHost {
   void _handleVote(Map<String, dynamic> data) {
     try {
       final Map<String, dynamic>? voteData = data['vote'];
-      
+
       if (voteData == null) {
         print('[Votexa Host] Vote data missing');
         return;
       }
-      
+
       // Extract vote information
       final String? deviceId = voteData['deviceId'];
       final String? participantUuid = voteData['participantUuid'];
       final String? questionId = voteData['questionId'];
       final String? selectedOption = voteData['selectedOption'];
-      
-      if (deviceId == null || participantUuid == null || 
-          questionId == null || selectedOption == null) {
+
+      if (deviceId == null ||
+          participantUuid == null ||
+          questionId == null ||
+          selectedOption == null) {
         print('[Votexa Host] Invalid vote - missing required fields');
         return;
       }
-      
+
       final voteKey = '$deviceId:$participantUuid:$questionId';
-      
+
       // Check if vote is duplicate
       if (_votedKeys.contains(voteKey)) {
         print('[Votexa Host] Duplicate vote prevented: $voteKey');
-        
+
         // Send rejection to participant
         sendVoteAcknowledgement(
           participantUuid,
@@ -258,10 +284,10 @@ class WebSocketHost {
         );
         return;
       }
-      
+
       // Record the vote
       _votedKeys.add(voteKey);
-      
+
       // Forward vote to provider
       _messageController.add({
         'type': 'voteReceived',
@@ -271,10 +297,11 @@ class WebSocketHost {
           'deviceId': deviceId,
           'participantUuid': participantUuid,
           'selectedOption': selectedOption,
-          'timestamp': voteData['timestamp'] ?? DateTime.now().toIso8601String(),
+          'timestamp':
+              voteData['timestamp'] ?? DateTime.now().toIso8601String(),
         },
       });
-      
+
       print('[Votexa Host] Vote recorded: $voteKey -> $selectedOption');
     } catch (e) {
       print('[Votexa Host] Error handling vote: $e');
@@ -302,7 +329,9 @@ class WebSocketHost {
   ) {
     final client = _clientsByUuid[participantUuid];
     if (client == null) {
-      print('[Votexa Host] Cannot send poll info - participant not found: $participantUuid');
+      print(
+        '[Votexa Host] Cannot send poll info - participant not found: $participantUuid',
+      );
       return;
     }
 
@@ -333,7 +362,9 @@ class WebSocketHost {
   }) {
     final client = _clientsByUuid[participantUuid];
     if (client == null) {
-      print('[Votexa Host] Cannot send acknowledgement - participant not found: $participantUuid');
+      print(
+        '[Votexa Host] Cannot send acknowledgement - participant not found: $participantUuid',
+      );
       return;
     }
 
@@ -348,7 +379,9 @@ class WebSocketHost {
       };
 
       client.add(jsonEncode(ackMessage));
-      print('[Votexa Host] Sent vote acknowledgement to $participantUuid: $success');
+      print(
+        '[Votexa Host] Sent vote acknowledgement to $participantUuid: $success',
+      );
     } catch (e) {
       print('[Votexa Host] Error sending vote acknowledgement: $e');
     }
@@ -360,12 +393,16 @@ class WebSocketHost {
       'type': 'participantCount',
       'data': {'count': count},
     };
-    
+
     _broadcastToAll(message);
     print('[Votexa Host] Broadcast participant count: $count');
   }
 
-  void broadcastResults(String pollId, List<Question> questions, int totalParticipants) {
+  void broadcastResults(
+    String pollId,
+    List<Question> questions,
+    int totalParticipants,
+  ) {
     final message = {
       'type': 'resultsUpdate',
       'data': {
@@ -374,20 +411,19 @@ class WebSocketHost {
         'totalParticipants': totalParticipants,
       },
     };
-    
+
     _broadcastToAll(message);
   }
 
   void broadcastQuestionUpdate(Question question) {
-    final message = {
-      'type': 'questionUpdated',
-      'data': question.toJson(),
-    };
+    final message = {'type': 'questionUpdated', 'data': question.toJson()};
     _broadcastToAll(message);
   }
 
   void broadcastPollStarted(String pollId, List<Question> questions) {
-    print('[Vovexa Host] Broadcasting pollStarted - ${_connectedClients.length} clients, ${questions.length} questions');
+    print(
+      '[Vovexa Host] Broadcasting pollStarted - ${_connectedClients.length} clients, ${questions.length} questions',
+    );
     final message = {
       'type': 'pollStarted',
       'data': {
@@ -402,7 +438,9 @@ class WebSocketHost {
   void _broadcastToAll(Map<String, dynamic> message) {
     final jsonString = jsonEncode(message);
     final messageType = message['type'] ?? 'unknown';
-    print('[Vovexa Host] Broadcasting $messageType to ${_connectedClients.length} clients');
+    print(
+      '[Vovexa Host] Broadcasting $messageType to ${_connectedClients.length} clients',
+    );
     int sent = 0;
     for (var client in _connectedClients) {
       try {
@@ -425,9 +463,9 @@ class WebSocketHost {
 
   Future<void> stop() async {
     _isRunning = false;
-    
+
     closePoll();
-    
+
     // Close all client connections
     for (var client in _connectedClients) {
       try {
@@ -440,15 +478,19 @@ class WebSocketHost {
     _clientsByUuid.clear();
     _participantUuidsPerDevice.clear();
     _votedKeys.clear();
-    
+
     await _server.close();
     await _messageController.close();
-    
+
     print('[Votexa Host] Server stopped');
   }
 
   // Check if a device+uuid combination has already voted for a question
-  bool hasDeviceVoted(String deviceId, String participantUuid, String questionId) {
+  bool hasDeviceVoted(
+    String deviceId,
+    String participantUuid,
+    String questionId,
+  ) {
     return _votedKeys.contains('$deviceId:$participantUuid:$questionId');
   }
 }

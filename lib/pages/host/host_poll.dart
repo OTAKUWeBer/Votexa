@@ -76,28 +76,14 @@ class _HostPollPageState extends State<HostPollPage> {
 
   Future<String> _getQrData(BuildContext context, String pollId) async {
     try {
-      // Get localhost address (will be 192.168.x.x on local network)
-      final interfaces = await NetworkInterface.list();
-      String? hostIp;
-
-      for (var interface in interfaces) {
-        for (var addr in interface.addresses) {
-          if (addr.type == InternetAddressType.IPv4 &&
-              !addr.isLoopback &&
-              addr.address.startsWith('192.168')) {
-            hostIp = addr.address;
-            break;
-          }
-        }
-        if (hostIp != null) break;
-      }
-
       final pollProvider = context.read<PollProvider>();
-      final wsHost = pollProvider.wsHost;
-      final port = wsHost?.port ?? 8080;
+      
+      // Use the host IP and port from the provider (already set by WebSocketHost)
+      final hostIp = pollProvider.hostIp ?? '192.168.1.100';
+      final port = pollProvider.hostPort ?? 8080;
 
-      hostIp ??= '192.168.1.100'; // Fallback
-
+      print('[HostPollPage] QR Data - IP: $hostIp, Port: $port, Poll: $pollId');
+      
       // Format: VOTEXA|pollId|hostIp|port
       return 'VOTEXA|$pollId|$hostIp|$port';
     } catch (e) {
